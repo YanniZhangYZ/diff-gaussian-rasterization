@@ -31,6 +31,7 @@ namespace FORWARD
 		bool* clamped,
 		const float* cov3D_precomp,
 		const float* colors_precomp,
+		const float* ink_mix,
 		const float* viewmatrix,
 		const float* projmatrix,
 		const glm::vec3* cam_pos,
@@ -42,6 +43,7 @@ namespace FORWARD
 		float* depths,
 		float* cov3Ds,
 		float* colors,
+		float* ink_mixs,
 		float4* conic_opacity,
 		const dim3 grid,
 		uint32_t* tiles_touched,
@@ -55,11 +57,13 @@ namespace FORWARD
 		int W, int H,
 		const float2* points_xy_image,
 		const float* features,
+		const float* ink_mix,
 		const float4* conic_opacity,
 		float* final_T,
 		uint32_t* n_contrib,
 		const float* bg_color,
-		float* out_color);
+		float* out_color,
+		float* out_ink_mix);
 }
 
 

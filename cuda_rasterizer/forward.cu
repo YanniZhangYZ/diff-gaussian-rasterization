@@ -13,6 +13,7 @@
 #include "auxiliary.h"
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
+#include <stdio.h>
 namespace cg = cooperative_groups;
 
 // Forward method for converting the input spherical harmonics
@@ -163,6 +164,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	bool* clamped,
 	const float* cov3D_precomp,
 	const float* colors_precomp,
+	const float* ink_mix,
 	const float* viewmatrix,
 	const float* projmatrix,
 	const glm::vec3* cam_pos,
@@ -174,6 +176,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	float* depths,
 	float* cov3Ds,
 	float* rgb,
+	float* ink_mixs,
 	float4* conic_opacity,
 	const dim3 grid,
 	uint32_t* tiles_touched,
@@ -246,6 +249,24 @@ __global__ void preprocessCUDA(int P, int D, int M,
 		rgb[idx * C + 2] = result.z;
 	}
 
+	// NOTE: very not sure about the index
+	ink_mixs[idx*6+0] = ink_mix[idx*6+0];
+	ink_mixs[idx*6+1] = ink_mix[idx*6+1];
+	ink_mixs[idx*6+2] = ink_mix[idx*6+2];
+	ink_mixs[idx*6+3] = ink_mix[idx*6+3];
+	ink_mixs[idx*6+4] = ink_mix[idx*6+4];
+	ink_mixs[idx*6+5] = ink_mix[idx*6+5];
+
+	// printf("ink_mixs[%d] = %f\n", idx*6+0, ink_mixs[idx*6+0]);
+	// printf("ink_mixs[%d] = %f\n", idx*6+1, ink_mixs[idx*6+1]);
+	// printf("ink_mixs[%d] = %f\n", idx*6+2, ink_mixs[idx*6+2]);
+	// printf("ink_mixs[%d] = %f\n", idx*6+3, ink_mixs[idx*6+3]);
+	// printf("ink_mixs[%d] = %f\n", idx*6+4, ink_mixs[idx*6+4]);
+	// printf("ink_mixs[%d] = %f\n", idx*6+5, ink_mixs[idx*6+5]);
+	// printf("rgb[%d] = %f\n", idx * C + 0, rgb[idx * C + 0]);
+	// printf("rgb[%d] = %f\n", idx * C + 1, rgb[idx * C + 1]);
+	// printf("rgb[%d] = %f\n", idx * C + 2, rgb[idx * C + 2]);
+
 	// Store some useful helper data for the next steps.
 	depths[idx] = p_view.z;
 	radii[idx] = my_radius;
@@ -266,11 +287,13 @@ renderCUDA(
 	int W, int H,
 	const float2* __restrict__ points_xy_image,
 	const float* __restrict__ features,
+	const float* __restrict__ ink_mix,
 	const float4* __restrict__ conic_opacity,
 	float* __restrict__ final_T,
 	uint32_t* __restrict__ n_contrib,
 	const float* __restrict__ bg_color,
-	float* __restrict__ out_color)
+	float* __restrict__ out_color,
+	float* __restrict__ out_ink_mix)
 {
 	// Identify current tile and associated min/max pixel range.
 	auto block = cg::this_thread_block();
@@ -301,6 +324,7 @@ renderCUDA(
 	uint32_t contributor = 0;
 	uint32_t last_contributor = 0;
 	float C[CHANNELS] = { 0 };
+	float INK[6] = {0};
 
 	// Iterate over batches until all done or range is complete
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
@@ -354,6 +378,9 @@ renderCUDA(
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
 
+			for(int ch =0; ch<6 ; ch++)
+				INK[ch] += ink_mix[collected_id[j] * 6 + ch] * alpha * T;
+
 			T = test_T;
 
 			// Keep track of last range entry to update this
@@ -370,6 +397,9 @@ renderCUDA(
 		n_contrib[pix_id] = last_contributor;
 		for (int ch = 0; ch < CHANNELS; ch++)
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
+		
+		for(int ch = 0; ch < 6; ch++)
+			out_ink_mix[ch * H * W + pix_id] = INK[ch];
 	}
 }
 
@@ -380,11 +410,13 @@ void FORWARD::render(
 	int W, int H,
 	const float2* means2D,
 	const float* colors,
+	const float* ink_mix,
 	const float4* conic_opacity,
 	float* final_T,
 	uint32_t* n_contrib,
 	const float* bg_color,
-	float* out_color)
+	float* out_color,
+	float* out_ink_mix)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
 		ranges,
@@ -392,11 +424,13 @@ void FORWARD::render(
 		W, H,
 		means2D,
 		colors,
+		ink_mix,
 		conic_opacity,
 		final_T,
 		n_contrib,
 		bg_color,
-		out_color);
+		out_color,
+		out_ink_mix);
 }
 
 void FORWARD::preprocess(int P, int D, int M,
@@ -409,6 +443,7 @@ void FORWARD::preprocess(int P, int D, int M,
 	bool* clamped,
 	const float* cov3D_precomp,
 	const float* colors_precomp,
+	const float* ink_mix,
 	const float* viewmatrix,
 	const float* projmatrix,
 	const glm::vec3* cam_pos,
@@ -420,6 +455,7 @@ void FORWARD::preprocess(int P, int D, int M,
 	float* depths,
 	float* cov3Ds,
 	float* rgb,
+	float* ink_mixs,
 	float4* conic_opacity,
 	const dim3 grid,
 	uint32_t* tiles_touched,
@@ -436,6 +472,7 @@ void FORWARD::preprocess(int P, int D, int M,
 		clamped,
 		cov3D_precomp,
 		colors_precomp,
+		ink_mix,
 		viewmatrix, 
 		projmatrix,
 		cam_pos,
@@ -447,6 +484,7 @@ void FORWARD::preprocess(int P, int D, int M,
 		depths,
 		cov3Ds,
 		rgb,
+		ink_mixs,
 		conic_opacity,
 		grid,
 		tiles_touched,

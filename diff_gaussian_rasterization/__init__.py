@@ -23,6 +23,7 @@ def rasterize_gaussians(
     means2D,
     sh,
     colors_precomp,
+    ink_mix,
     opacities,
     scales,
     rotations,
@@ -34,6 +35,7 @@ def rasterize_gaussians(
         means2D,
         sh,
         colors_precomp,
+        ink_mix,
         opacities,
         scales,
         rotations,
@@ -49,6 +51,7 @@ class _RasterizeGaussians(torch.autograd.Function):
         means2D,
         sh,
         colors_precomp,
+        ink_mix,
         opacities,
         scales,
         rotations,
@@ -61,6 +64,7 @@ class _RasterizeGaussians(torch.autograd.Function):
             raster_settings.bg, 
             means3D,
             colors_precomp,
+            ink_mix,
             opacities,
             scales,
             rotations,
@@ -83,19 +87,22 @@ class _RasterizeGaussians(torch.autograd.Function):
         if raster_settings.debug:
             cpu_args = cpu_deep_copy_tuple(args) # Copy them before they can be corrupted
             try:
-                num_rendered, color, radii, geomBuffer, binningBuffer, imgBuffer = _C.rasterize_gaussians(*args)
+                num_rendered, color, final_ink_mix, radii, geomBuffer, binningBuffer, imgBuffer = _C.rasterize_gaussians(*args)
             except Exception as ex:
                 torch.save(cpu_args, "snapshot_fw.dump")
                 print("\nAn error occured in forward. Please forward snapshot_fw.dump for debugging.")
                 raise ex
         else:
-            num_rendered, color, radii, geomBuffer, binningBuffer, imgBuffer = _C.rasterize_gaussians(*args)
+            num_rendered, color, final_ink_mix, radii, geomBuffer, binningBuffer, imgBuffer = _C.rasterize_gaussians(*args)
+        
 
         # Keep relevant tensors for backward
         ctx.raster_settings = raster_settings
         ctx.num_rendered = num_rendered
         ctx.save_for_backward(colors_precomp, means3D, scales, rotations, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer)
-        return color, radii
+
+        # This color is already the rendered image
+        return color, radii, final_ink_mix
 
     @staticmethod
     def backward(ctx, grad_out_color, _):
@@ -184,12 +191,15 @@ class GaussianRasterizer(nn.Module):
             
         return visible
 
-    def forward(self, means3D, means2D, opacities, shs = None, colors_precomp = None, scales = None, rotations = None, cov3D_precomp = None):
+    def forward(self, means3D, means2D, opacities, shs = None, colors_precomp = None, ink_mix =None,  scales = None, rotations = None, cov3D_precomp = None):
         
         raster_settings = self.raster_settings
 
         if (shs is None and colors_precomp is None) or (shs is not None and colors_precomp is not None):
             raise Exception('Please provide excatly one of either SHs or precomputed colors!')
+        
+        if ink_mix is None:
+            raise Exception('Please provide ink_mix!')
         
         if ((scales is None or rotations is None) and cov3D_precomp is None) or ((scales is not None or rotations is not None) and cov3D_precomp is not None):
             raise Exception('Please provide exactly one of either scale/rotation pair or precomputed 3D covariance!')
@@ -212,6 +222,7 @@ class GaussianRasterizer(nn.Module):
             means2D,
             shs,
             colors_precomp,
+            ink_mix,
             opacities,
             scales, 
             rotations,

@@ -162,6 +162,7 @@ CudaRasterizer::GeometryState CudaRasterizer::GeometryState::fromChunk(char*& ch
 	obtain(chunk, geom.cov3D, P * 6, 128);
 	obtain(chunk, geom.conic_opacity, P, 128);
 	obtain(chunk, geom.rgb, P * 3, 128);
+	obtain(chunk, geom.ink_mix, P * 6, 128);
 	obtain(chunk, geom.tiles_touched, P, 128);
 	cub::DeviceScan::InclusiveSum(nullptr, geom.scan_size, geom.tiles_touched, geom.tiles_touched, P);
 	obtain(chunk, geom.scanning_space, geom.scan_size, 128);
@@ -205,6 +206,7 @@ int CudaRasterizer::Rasterizer::forward(
 	const float* means3D,
 	const float* shs,
 	const float* colors_precomp,
+    const float* ink_mix,
 	const float* opacities,
 	const float* scales,
 	const float scale_modifier,
@@ -216,11 +218,16 @@ int CudaRasterizer::Rasterizer::forward(
 	const float tan_fovx, float tan_fovy,
 	const bool prefiltered,
 	float* out_color,
+    float* out_ink_mix,
 	int* radii,
 	bool debug)
 {
 	const float focal_y = height / (2.0f * tan_fovy);
 	const float focal_x = width / (2.0f * tan_fovx);
+
+	// print received ink_mix
+	// std::cout << "Received opacity: "<< opacities[0]<< std::endl;
+	// std::cout << "Received ink_mix: "<< ink_mix[0]<< std::endl;
 
 	size_t chunk_size = required<GeometryState>(P);
 	char* chunkptr = geometryBuffer(chunk_size);
@@ -256,6 +263,7 @@ int CudaRasterizer::Rasterizer::forward(
 		geomState.clamped,
 		cov3D_precomp,
 		colors_precomp,
+		ink_mix,
 		viewmatrix, projmatrix,
 		(glm::vec3*)cam_pos,
 		width, height,
@@ -266,6 +274,7 @@ int CudaRasterizer::Rasterizer::forward(
 		geomState.depths,
 		geomState.cov3D,
 		geomState.rgb,
+		geomState.ink_mix,
 		geomState.conic_opacity,
 		tile_grid,
 		geomState.tiles_touched,
@@ -326,11 +335,13 @@ int CudaRasterizer::Rasterizer::forward(
 		width, height,
 		geomState.means2D,
 		feature_ptr,
+		geomState.ink_mix,
 		geomState.conic_opacity,
 		imgState.accum_alpha,
 		imgState.n_contrib,
 		background,
-		out_color), debug)
+		out_color,
+		out_ink_mix), debug)
 
 	return num_rendered;
 }
